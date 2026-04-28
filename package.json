@@ -1,0 +1,47 @@
+{
+  "name": "@ivglad/codex-rotor",
+  "version": "0.1.0",
+  "description": "OAuth-based multi-account rotor wrapper for OpenAI Codex CLI",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "ivglad",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ivglad/codex-rotor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ivglad/codex-rotor/issues"
+  },
+  "homepage": "https://github.com/ivglad/codex-rotor#readme",
+  "keywords": [
+    "codex",
+    "chatgpt",
+    "oauth",
+    "rotation",
+    "cli"
+  ],
+  "bin": {
+    "codex": "./bin/codex.js",
+    "codex-rotor": "./bin/codex-rotor.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/**/*.test.js",
+    "lint": "node -e \"console.log('no-lint-config')\"",
+    "check": "npm run test",
+    "clean": "rm -rf dist node_modules",
+    "pack:local": "npm pack --pack-destination dist"
+  },
+  "dependencies": {
+    "@openai/codex": "^0.125.0"
+  }
+}

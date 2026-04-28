@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build/release
+/dist/
+*.tgz
+
+# runtime/log artifacts
+*.log
+npm-debug.log*
+
+# editor/os
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# temp
+.tmp/
