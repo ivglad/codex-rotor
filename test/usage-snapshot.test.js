@@ -67,6 +67,30 @@ test('extractLatestRateLimitsFromJsonlText returns the latest token_count snapsh
   assert.equal(extracted.rate_limits.secondary.used_percent, 13);
 });
 
+test('extractLatestRateLimitsFromJsonlText picks max timestamp even if log order is mixed', () => {
+  const text = [
+    tokenCountLine({
+      timestamp: '2026-04-28T09:31:42.387Z',
+      primaryUsed: 10,
+      primaryReset: 1777380791,
+      weeklyUsed: 2,
+      weeklyReset: 1777967591
+    }),
+    tokenCountLine({
+      timestamp: '2026-04-28T09:29:47.742Z',
+      primaryUsed: 9,
+      primaryReset: 1777380791,
+      weeklyUsed: 1,
+      weeklyReset: 1777967591
+    })
+  ].join('\n');
+
+  const extracted = extractLatestRateLimitsFromJsonlText(text);
+  assert.ok(extracted);
+  assert.equal(extracted.timestamp, '2026-04-28T09:31:42.387Z');
+  assert.equal(extracted.rate_limits.primary.used_percent, 10);
+});
+
 test('normalizeRateLimitsSnapshot computes left percent and reset countdowns', () => {
   const now = new Date('2026-04-26T10:00:00.000Z');
   const extracted = {
@@ -185,4 +209,52 @@ test('readSlotUsageSnapshot respects notBeforeIso to avoid stale limits from old
     { notBeforeIso: '2026-04-27T09:30:00.000Z' }
   );
   assert.equal(snapshot, null);
+});
+
+test('readSlotUsageSnapshot picks newest sample timestamp across recent rollout files', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-rotor-sample-order-'));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+
+  const home = path.join(root, 'slot-home');
+  const dayDir = path.join(home, 'sessions', '2026', '04', '28');
+  await fs.mkdir(dayDir, { recursive: true });
+
+  const lexicographicallyNewerFile = path.join(
+    dayDir,
+    'rollout-2026-04-28T14-24-13-older-sample.jsonl'
+  );
+  const lexicographicallyOlderFile = path.join(
+    dayDir,
+    'rollout-2026-04-28T13-31-55-newer-sample.jsonl'
+  );
+
+  await fs.writeFile(
+    lexicographicallyNewerFile,
+    `${tokenCountLine({
+      timestamp: '2026-04-28T09:25:57.836Z',
+      primaryUsed: 7,
+      primaryReset: 1777380791,
+      weeklyUsed: 1,
+      weeklyReset: 1777967591
+    })}\n`,
+    'utf8'
+  );
+
+  await fs.writeFile(
+    lexicographicallyOlderFile,
+    `${tokenCountLine({
+      timestamp: '2026-04-28T09:30:43.258Z',
+      primaryUsed: 9,
+      primaryReset: 1777380791,
+      weeklyUsed: 1,
+      weeklyReset: 1777967591
+    })}\n`,
+    'utf8'
+  );
+
+  const snapshot = await readSlotUsageSnapshot(home, new Date('2026-04-28T09:35:00.000Z'));
+  assert.ok(snapshot);
+  assert.equal(snapshot.sample_at, '2026-04-28T09:30:43.258Z');
+  assert.equal(snapshot.source_file, lexicographicallyOlderFile);
+  assert.equal(snapshot.primary.used_percent, 9);
 });

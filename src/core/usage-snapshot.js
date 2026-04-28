@@ -3,6 +3,8 @@ import path from 'node:path';
 import { pathExists } from './fs.js';
 
 const ROLLOUT_FILE_RE = /^rollout-.*\.jsonl$/;
+const FILE_SNAPSHOT_CACHE_MAX = 512;
+const fileSnapshotCache = new Map();
 
 function toFiniteNumber(value) {
   const n = Number(value);
@@ -56,8 +58,9 @@ function isAtOrAfter(isoTimestamp, notBeforeIso) {
 export function extractLatestRateLimitsFromJsonlText(text) {
   if (!text) return null;
   const lines = String(text).split(/\r?\n/);
+  let best = null;
 
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
+  for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].trim();
     if (!line) continue;
     if (!line.includes('"rate_limits"')) continue;
@@ -75,13 +78,24 @@ export function extractLatestRateLimitsFromJsonlText(text) {
       continue;
     }
 
-    return {
-      timestamp: parseTimestampToIso(parsed.timestamp),
-      rate_limits: rate
-    };
+    const timestamp = parseTimestampToIso(parsed.timestamp);
+    const ts = Number.isFinite(Date.parse(timestamp || ''))
+      ? Date.parse(timestamp)
+      : Number.NEGATIVE_INFINITY;
+    if (!best || ts >= best.ts) {
+      best = {
+        ts,
+        timestamp,
+        rate_limits: rate
+      };
+    }
   }
 
-  return null;
+  if (!best) return null;
+  return {
+    timestamp: best.timestamp,
+    rate_limits: best.rate_limits
+  };
 }
 
 function normalizeWindow(raw, now = new Date()) {
@@ -165,21 +179,35 @@ async function collectRecentSessionFiles(sessionsDirPath, maxFiles = 20) {
   return files;
 }
 
-async function readTailText(filePath, maxBytes = 256 * 1024) {
-  const handle = await fs.open(filePath, 'r');
+async function readLatestRateLimitsFromFile(filePath) {
+  let stats;
   try {
-    const stats = await handle.stat();
-    const size = Number(stats.size ?? 0);
-    if (size <= 0) return '';
-
-    const bytesToRead = Math.min(size, maxBytes);
-    const start = size - bytesToRead;
-    const buff = Buffer.alloc(bytesToRead);
-    await handle.read(buff, 0, bytesToRead, start);
-    return buff.toString('utf8');
-  } finally {
-    await handle.close();
+    stats = await fs.stat(filePath);
+  } catch {
+    return null;
   }
+  const size = Number(stats.size ?? 0);
+  const mtimeMs = Number(stats.mtimeMs ?? 0);
+  const cached = fileSnapshotCache.get(filePath);
+  if (cached && cached.size === size && cached.mtimeMs === mtimeMs) {
+    return cached.extracted;
+  }
+
+  let text = '';
+  try {
+    text = await fs.readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const extracted = extractLatestRateLimitsFromJsonlText(text);
+
+  fileSnapshotCache.set(filePath, { size, mtimeMs, extracted });
+  if (fileSnapshotCache.size > FILE_SNAPSHOT_CACHE_MAX) {
+    const oldestKey = fileSnapshotCache.keys().next().value;
+    if (oldestKey) fileSnapshotCache.delete(oldestKey);
+  }
+
+  return extracted;
 }
 
 export async function readSlotUsageSnapshot(codexHome, now = new Date(), options = {}) {
@@ -196,20 +224,32 @@ export async function readSlotUsageSnapshot(codexHome, now = new Date(), options
   }
 
   const files = await collectRecentSessionFiles(sessionsPath, maxFiles);
+  let best = null;
 
   for (const sessionFile of files) {
-    const tail = await readTailText(sessionFile);
-    const extracted = extractLatestRateLimitsFromJsonlText(tail);
+    const extracted = await readLatestRateLimitsFromFile(sessionFile);
     if (!extracted) continue;
     if (!isAtOrAfter(extracted.timestamp, notBeforeIso)) {
       continue;
     }
     const normalized = normalizeRateLimitsSnapshot(extracted, now);
     if (!normalized) continue;
-    return {
-      ...normalized,
-      source_file: sessionFile
-    };
+    const sampleMs = Number.isFinite(Date.parse(normalized.sample_at || ''))
+      ? Date.parse(normalized.sample_at)
+      : Number.NEGATIVE_INFINITY;
+    if (!best || sampleMs > best.sampleMs) {
+      best = {
+        sampleMs,
+        snapshot: {
+          ...normalized,
+          source_file: sessionFile
+        }
+      };
+    }
+  }
+
+  if (best) {
+    return best.snapshot;
   }
 
   return null;
