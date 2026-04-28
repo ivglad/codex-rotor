@@ -32,3 +32,24 @@ test('classifier returns interrupt for signal/130', () => {
     'interrupt'
   );
 });
+
+test('classifier keeps limit/auth priority over exit 130', () => {
+  assert.equal(
+    classifyFailure({
+      exitCode: 130,
+      signal: null,
+      stderrTail: 'rate limit reached for current workspace',
+      elapsedSeconds: 2
+    }),
+    'limit_exhausted'
+  );
+  assert.equal(
+    classifyFailure({
+      exitCode: 130,
+      signal: null,
+      stdoutTail: 'authentication failed: not logged in',
+      elapsedSeconds: 2
+    }),
+    'auth_invalid'
+  );
+});

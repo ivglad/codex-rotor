@@ -5,6 +5,14 @@ import { readJson, writeJsonAtomic } from './fs.js';
 function normalizeConfig(raw) {
   if (!raw || typeof raw !== 'object') return defaultConfig();
   if (raw.schema_version === 2 && Array.isArray(raw.slots)) {
+    if (!raw.rotation || typeof raw.rotation !== 'object') {
+      raw.rotation = defaultConfig().rotation;
+    }
+    if (!raw.scheduling || typeof raw.scheduling !== 'object') {
+      raw.scheduling = defaultConfig().scheduling;
+    } else if (!raw.scheduling.mode) {
+      raw.scheduling.mode = defaultConfig().scheduling.mode;
+    }
     return raw;
   }
   return defaultConfig();

@@ -57,6 +57,9 @@ function removeSlotsById(config, state, slotIdsToRemove) {
     if (state?.slots && slotId in state.slots) {
       delete state.slots[slotId];
     }
+    if (state?.leases && slotId in state.leases) {
+      delete state.leases[slotId];
+    }
   }
 
   if (slotIdsToRemove.has(state.active_slot)) {
@@ -64,6 +67,14 @@ function removeSlotsById(config, state, slotIdsToRemove) {
   }
   if (slotIdsToRemove.has(config.default_slot)) {
     config.default_slot = null;
+  }
+
+  if (state?.sessions && typeof state.sessions === 'object') {
+    for (const session of Object.values(state.sessions)) {
+      if (!session || typeof session !== 'object') continue;
+      if (slotIdsToRemove.has(session.last_slot)) session.last_slot = null;
+      if (slotIdsToRemove.has(session.suggested_slot)) session.suggested_slot = null;
+    }
   }
   return { changed: true, removedSlots };
 }
@@ -91,11 +102,39 @@ function rebuildStateSlotsAfterRename(config, state, oldIdBySlot) {
 
   state.slots = nextStateSlots;
 
+  if (!state.leases || typeof state.leases !== 'object') {
+    state.leases = {};
+  } else {
+    const nextLeases = {};
+    for (const [oldSlotId, lease] of Object.entries(state.leases)) {
+      const mappedSlotId = idMap.get(oldSlotId) || oldSlotId;
+      if (slotIdsSet(config).has(mappedSlotId)) {
+        nextLeases[mappedSlotId] = {
+          ...lease,
+          slot_id: mappedSlotId
+        };
+      }
+    }
+    state.leases = nextLeases;
+  }
+
   if (state.active_slot) {
     state.active_slot = idMap.get(state.active_slot) || state.active_slot;
   }
   if (config.default_slot) {
     config.default_slot = idMap.get(config.default_slot) || config.default_slot;
+  }
+
+  if (state?.sessions && typeof state.sessions === 'object') {
+    for (const session of Object.values(state.sessions)) {
+      if (!session || typeof session !== 'object') continue;
+      if (session.last_slot) {
+        session.last_slot = idMap.get(session.last_slot) || session.last_slot;
+      }
+      if (session.suggested_slot) {
+        session.suggested_slot = idMap.get(session.suggested_slot) || session.suggested_slot;
+      }
+    }
   }
 
   return idMap;

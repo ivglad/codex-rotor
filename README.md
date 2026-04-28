@@ -33,6 +33,10 @@ codex
 2. ты вручную перезапускаешь `codex`;
 3. продолжаешь работу из истории.
 
+Перед запуском `codex` wrapper также делает preflight-проверку лимитов:
+- через `codex app-server` (`account/rateLimits/read`);
+- и дополнительно по локальным session snapshots (с учетом `auth.json:last_refresh`, чтобы игнорировать старые данные от прошлого логина).
+
 ## Основные команды
 
 ```bash
@@ -43,3 +47,23 @@ codex-rotor login-all
 codex-rotor rotate
 codex-rotor unblock <slot-id>
 ```
+
+## Multi-terminal поведение
+
+- По умолчанию режим планировщика: `terminal_pinned`.
+- Каждый терминал получает `terminal_id` (из `CODEX_ROTOR_TERMINAL_ID` или авто-детект из `TMUX_PANE/WEZTERM_PANE/...`).
+- Во время активной сессии слот берется в runtime-lease, чтобы параллельные запуски из других терминалов не заняли тот же слот.
+
+## Переменные окружения (опционально)
+
+### App Server preflight limits
+
+- `CODEX_ROTOR_APP_SERVER_LIMITS` — включить/выключить app-server probe (`true` по умолчанию).
+- `CODEX_ROTOR_APP_SERVER_TIMEOUT_MS` — таймаут probe (по умолчанию `4000`).
+- `CODEX_ROTOR_APP_SERVER_RETRIES` — retry count для перегрузки app-server `-32001` (по умолчанию `2`).
+- `CODEX_ROTOR_APP_SERVER_RETRY_BASE_DELAY_MS` — базовая задержка backoff (по умолчанию `120`).
+- `CODEX_ROTOR_APP_SERVER_LIMIT_ID` — какой bucket смотреть в `rateLimitsByLimitId` (по умолчанию `codex`).
+
+### Terminal identity
+
+- `CODEX_ROTOR_TERMINAL_ID` — явный стабильный ID терминала (если хочешь зафиксировать вручную).

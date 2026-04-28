@@ -75,6 +75,8 @@ test('loadState ignores legacy accounts schema and falls back to schema v2 defau
       assert.equal(state.active_slot, 'main');
       assert.equal(Object.hasOwn(state.slots, 'main'), true);
       assert.equal(Object.hasOwn(state.slots, 'legacy-main'), false);
+      assert.equal(typeof state.sessions, 'object');
+      assert.equal(typeof state.leases, 'object');
     }
   );
 });

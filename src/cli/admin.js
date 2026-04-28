@@ -97,9 +97,29 @@ function formatRemainingWindow(seconds) {
   return formatCompactDuration(n);
 }
 
-function formatCell(value, width) {
-  const raw = String(value ?? '-');
-  return raw.padStart(width, ' ');
+const TABLE_COLUMNS = [
+  { key: 'slot', label: 'slot', width: 16 },
+  { key: 'account', label: 'account', width: 30 },
+  { key: 'workspace', label: 'workspace', width: 48 },
+  { key: 'status', label: 'status', width: 24 },
+  { key: 'fiveHour', label: '5h left/reset', width: 16 },
+  { key: 'week', label: 'week/reset', width: 16 },
+  { key: 'updated', label: 'updated', width: 10 }
+];
+
+const TABLE_SEPARATOR = TABLE_COLUMNS
+  .map((col) => '-'.repeat(col.width))
+  .join('  ');
+
+function shortText(value, width) {
+  const raw = String(value ?? '—').trim() || '—';
+  if (raw.length <= width) return raw;
+  if (width <= 1) return raw.slice(0, width);
+  return `${raw.slice(0, width - 1)}…`;
+}
+
+function formatTableCell(value, width) {
+  return shortText(value, width).padEnd(width, ' ');
 }
 
 function formatStatusHuman(slotState, now = new Date()) {
@@ -118,20 +138,6 @@ function formatStatusHuman(slotState, now = new Date()) {
   return status;
 }
 
-function formatLimitHuman(usage, identity, now = new Date()) {
-  if (!usage) {
-    if (identity) {
-      return 'Остаток: ожидание первого запроса';
-    }
-    return 'Остаток: аккаунт не авторизован';
-  }
-  const p = usage.primary || null;
-  const w = usage.secondary || null;
-  return `5ч осталось ${formatLeftPercent(p)} (сброс через ${formatRemainingWindow(p?.resets_in_seconds)}), `
-    + `неделя осталось ${formatLeftPercent(w)} (сброс через ${formatRemainingWindow(w?.resets_in_seconds)}), `
-    + `данные ${formatSampleAge(usage, now)} назад`;
-}
-
 function accountText(identity) {
   if (!identity) return '—';
   return identity.email || identity.user_id || identity.account_id || '—';
@@ -139,7 +145,56 @@ function accountText(identity) {
 
 function workspaceText(identity) {
   if (!identity) return '—';
-  return identity.workspace_title || identity.workspace_id || '—';
+  const title = String(identity.workspace_title || '').trim();
+  const id = String(identity.workspace_id || '').trim();
+  if (title && id && title.toLowerCase() === 'personal') {
+    return id;
+  }
+  if (title && id) {
+    return `${title} (${id})`;
+  }
+  return title || id || '—';
+}
+
+function formatQuotaCell(windowData) {
+  const left = formatLeftPercent(windowData);
+  const reset = formatRemainingWindow(windowData?.resets_in_seconds);
+  if (left === '-' && reset === '-') return '- / -';
+  return `${left} / ${reset}`;
+}
+
+function formatSlotCell(slotId, isActive) {
+  return isActive ? `${slotId}*` : slotId;
+}
+
+function renderTableHeader() {
+  const header = TABLE_COLUMNS
+    .map((col) => formatTableCell(col.label, col.width))
+    .join('  ');
+  console.log(header);
+  console.log(TABLE_SEPARATOR);
+}
+
+function renderTableRows(config, state, usageBySlot, identitiesBySlot, now) {
+  for (const slot of config.slots) {
+    const slotState = ensureSlotState(state, slot.id);
+    const identity = identitiesBySlot?.[slot.id] || null;
+    const usage = usageBySlot?.[slot.id] || null;
+    const rowData = {
+      slot: formatSlotCell(slot.id, slot.id === state.active_slot),
+      account: accountText(identity),
+      workspace: workspaceText(identity),
+      status: formatStatusHuman(slotState, now),
+      fiveHour: formatQuotaCell(usage?.primary),
+      week: formatQuotaCell(usage?.secondary),
+      updated: formatSampleAge(usage, now)
+    };
+
+    const row = TABLE_COLUMNS
+      .map((col) => formatTableCell(rowData[col.key], col.width))
+      .join('  ');
+    console.log(row);
+  }
 }
 
 async function loadUsageBySlot(config, identitiesBySlot, now = new Date()) {
@@ -206,20 +261,8 @@ async function cmdStatus() {
 
   console.log(`Активный слот: ${state.active_slot ?? '—'}`);
   console.log('');
-  console.log('Слоты:');
-  for (const slot of config.slots) {
-    const marker = slot.id === state.active_slot ? '*' : ' ';
-    const slotState = ensureSlotState(state, slot.id);
-    const identity = identitiesBySlot[slot.id] || null;
-    const usage = usageBySlot[slot.id] || null;
-    const statusHuman = formatStatusHuman(slotState, now);
-    const planText = usage?.plan_type || identity?.plan_type || '—';
-
-    console.log(`${marker} ${slot.id} (${slot.label})`);
-    console.log(`   Статус: ${statusHuman}`);
-    console.log(`   Аккаунт: ${accountText(identity)} | Workspace: ${workspaceText(identity)} | План: ${planText}`);
-    console.log(`   ${formatLimitHuman(usage, identity, now)}`);
-  }
+  renderTableHeader();
+  renderTableRows(config, state, usageBySlot, identitiesBySlot, now);
 
   const removedInvalid = reconcileReport?.removed_invalid || [];
   const removedDuplicate = reconcileReport?.removed_duplicate || [];
@@ -495,29 +538,8 @@ function printWatchTable(config, state, usageBySlot, identitiesBySlot, now, inte
   console.log('codex-rotor watch');
   console.log(`time: ${iso(now)}   interval: ${interval}s`);
   console.log('');
-  console.log('A  slot            status              5h left  reset      wk left  reset      updated');
-  console.log('---------------------------------------------------------------------------------------');
-  for (const slot of config.slots) {
-    const st = ensureSlotState(state, slot.id);
-    const marker = slot.id === state.active_slot ? '*' : ' ';
-    const identity = identitiesBySlot?.[slot.id] || null;
-    const usage = usageBySlot?.[slot.id] || null;
-    const statusHuman = formatStatusHuman(st, now);
-    const row = [
-      marker,
-      slot.id.padEnd(15, ' '),
-      statusHuman.padEnd(18, ' '),
-      formatCell(formatLeftPercent(usage?.primary), 7),
-      formatCell(formatRemainingWindow(usage?.primary?.resets_in_seconds), 8),
-      formatCell(formatLeftPercent(usage?.secondary), 7),
-      formatCell(formatRemainingWindow(usage?.secondary?.resets_in_seconds), 8),
-      formatCell(formatSampleAge(usage, now), 7)
-    ].join('  ');
-    console.log(row);
-    console.log(`   acct=${accountText(identity)} | ws=${workspaceText(identity)} | ${formatLimitHuman(usage, identity, now)}`);
-  }
-  console.log('---------------------------------------------------------------------------------------');
-  console.log('Legend: left = remaining quota in current window.');
+  renderTableHeader();
+  renderTableRows(config, state, usageBySlot, identitiesBySlot, now);
   console.log('Ctrl+C to stop');
 }
 

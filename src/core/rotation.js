@@ -1,14 +1,23 @@
-import { ensureSlotState } from './state-store.js';
+import { ensureSessionState, ensureSlotState } from './state-store.js';
 import { iso, secondsFromNow } from './time.js';
 import { pickNextSlot } from './selector.js';
 
-export function markOk(state, slotId) {
+export function markOk(state, slotId, options = {}) {
   const s = ensureSlotState(state, slotId);
   s.status = 'ready';
   s.last_error = null;
   s.blocked_until = null;
   s.last_ok = iso();
   state.active_slot = slotId;
+
+  const terminalId = options.terminalId || null;
+  if (terminalId) {
+    const session = ensureSessionState(state, terminalId);
+    session.last_slot = slotId;
+    session.suggested_slot = null;
+    session.last_command = options.command || null;
+    session.updated_at = iso();
+  }
 }
 
 export function blockSlot(state, slotId, status, seconds, reason) {
@@ -19,27 +28,34 @@ export function blockSlot(state, slotId, status, seconds, reason) {
   s.blocked_until = seconds > 0 ? iso(secondsFromNow(seconds)) : null;
 }
 
-export function applyFailurePolicy({ config, state, slotId, failureType, now = new Date() }) {
+export function applyFailurePolicy({ config, state, slotId, failureType, terminalId = null, command = null, now = new Date() }) {
   const rot = config.rotation || {};
   let changed = false;
   let rotatedTo = null;
 
   if (failureType === 'limit_exhausted') {
     blockSlot(state, slotId, 'blocked_limit', Number(rot.limit_block_seconds ?? 18000), failureType);
-    const next = pickNextSlot(config, state, slotId, now);
+    const next = pickNextSlot(config, state, slotId, now, { terminalId });
     if (next) {
       state.active_slot = next.id;
       state.last_rotation_at = iso();
       state.last_rotation_reason = failureType;
       rotatedTo = next.id;
       changed = true;
+    }
+    if (terminalId) {
+      const session = ensureSessionState(state, terminalId);
+      session.last_slot = slotId;
+      session.suggested_slot = rotatedTo;
+      session.last_command = command || null;
+      session.updated_at = iso();
     }
     return { changed: true, rotatedTo, action: 'rotated_after_limit' };
   }
 
   if (failureType === 'auth_invalid') {
     blockSlot(state, slotId, 'blocked_auth', Number(rot.auth_block_seconds ?? 900), failureType);
-    const next = pickNextSlot(config, state, slotId, now);
+    const next = pickNextSlot(config, state, slotId, now, { terminalId });
     if (next) {
       state.active_slot = next.id;
       state.last_rotation_at = iso();
@@ -47,7 +63,21 @@ export function applyFailurePolicy({ config, state, slotId, failureType, now = n
       rotatedTo = next.id;
       changed = true;
     }
+    if (terminalId) {
+      const session = ensureSessionState(state, terminalId);
+      session.last_slot = slotId;
+      session.suggested_slot = rotatedTo;
+      session.last_command = command || null;
+      session.updated_at = iso();
+    }
     return { changed: true, rotatedTo, action: 'rotated_after_auth_invalid' };
+  }
+
+  if (terminalId) {
+    const session = ensureSessionState(state, terminalId);
+    session.last_slot = slotId;
+    session.last_command = command || null;
+    session.updated_at = iso();
   }
 
   return { changed, rotatedTo, action: 'no_policy_change' };

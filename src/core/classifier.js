@@ -16,16 +16,24 @@ const AUTH_PATTERNS = [
   /authentication\s+failed/i
 ];
 
-export function classifyFailure({ exitCode, signal, stderrTail = '', elapsedSeconds = 0 }) {
-  if (signal || exitCode === 130) {
-    return 'interrupt';
-  }
-  const hay = stderrTail || '';
+function combineOutput(stderrTail, stdoutTail, outputTail) {
+  if (outputTail) return String(outputTail);
+  const stderr = String(stderrTail || '');
+  const stdout = String(stdoutTail || '');
+  if (stderr && stdout) return `${stdout}\n${stderr}`;
+  return stderr || stdout;
+}
+
+export function classifyFailure({ exitCode, signal, stderrTail = '', stdoutTail = '', outputTail = '', elapsedSeconds = 0 }) {
+  const hay = combineOutput(stderrTail, stdoutTail, outputTail);
   if (LIMIT_PATTERNS.some((re) => re.test(hay))) {
     return 'limit_exhausted';
   }
   if (AUTH_PATTERNS.some((re) => re.test(hay))) {
     return 'auth_invalid';
+  }
+  if (signal || exitCode === 130) {
+    return 'interrupt';
   }
   if (exitCode === 0) {
     return 'ok';

@@ -6,6 +6,9 @@ import { applyFailurePolicy } from '../src/core/rotation.js';
 function sampleConfig() {
   return {
     default_slot: 'main',
+    scheduling: {
+      mode: 'terminal_pinned'
+    },
     slots: [
       { id: 'main', label: 'Main', codex_home: '/tmp/main', priority: 100, enabled: true },
       { id: 'alt', label: 'Alt', codex_home: '/tmp/alt', priority: 90, enabled: true }
@@ -21,6 +24,8 @@ function sampleConfig() {
 function sampleState() {
   return {
     active_slot: 'main',
+    sessions: {},
+    leases: {},
     slots: {
       main: { status: 'ready', blocked_until: null, last_error: null, last_error_at: null, last_ok: null },
       alt: { status: 'ready', blocked_until: null, last_error: null, last_error_at: null, last_ok: null }
@@ -43,6 +48,48 @@ test('selector skips pending_auth slots', () => {
   state.slots.main.status = 'pending_auth';
   const picked = pickEligibleSlot(config, state, null, new Date());
   assert.equal(picked?.id, 'alt');
+});
+
+test('selector prefers terminal suggested slot in terminal_pinned mode', () => {
+  const config = sampleConfig();
+  const state = sampleState();
+  state.sessions.t1 = {
+    suggested_slot: 'alt',
+    last_slot: 'main',
+    last_command: 'exec',
+    updated_at: '2026-01-01T00:00:00.000Z'
+  };
+  const picked = pickEligibleSlot(config, state, null, new Date(), { terminalId: 't1' });
+  assert.equal(picked?.id, 'alt');
+});
+
+test('selector skips slots leased by other terminals', () => {
+  const config = sampleConfig();
+  const state = sampleState();
+  state.leases.main = {
+    lease_id: 'abc',
+    slot_id: 'main',
+    terminal_id: 't2',
+    pid: process.pid,
+    acquired_at: '2026-01-01T00:00:00.000Z',
+    heartbeat_at: '2026-01-01T00:00:00.000Z'
+  };
+  const picked = pickEligibleSlot(config, state, null, new Date(), { terminalId: 't1' });
+  assert.equal(picked?.id, 'alt');
+});
+
+test('selector ignores terminal pinning in global_active mode', () => {
+  const config = sampleConfig();
+  config.scheduling.mode = 'global_active';
+  const state = sampleState();
+  state.sessions.t1 = {
+    suggested_slot: 'alt',
+    last_slot: 'alt',
+    last_command: 'exec',
+    updated_at: '2026-01-01T00:00:00.000Z'
+  };
+  const picked = pickEligibleSlot(config, state, null, new Date(), { terminalId: 't1' });
+  assert.equal(picked?.id, 'main');
 });
 
 test('pickNextSlot rotates to next available slot', () => {
