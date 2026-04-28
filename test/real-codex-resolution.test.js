@@ -27,7 +27,10 @@ test('findRealCodex avoids PATH wrapper shim recursion', async (t) => {
   t.after(async () => fs.rm(root, { recursive: true, force: true }));
 
   const fakeBin = path.join(root, 'bin');
+  const fakeGlobalCodex = path.join(root, 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
   await fs.mkdir(fakeBin, { recursive: true });
+  await fs.mkdir(path.dirname(fakeGlobalCodex), { recursive: true });
+  await fs.writeFile(fakeGlobalCodex, '#!/usr/bin/env node\nconsole.log("ok")\n', { mode: 0o755 });
 
   const wrapperPath = path.join(process.cwd(), 'bin', 'codex.js');
   const pathShim = path.join(fakeBin, 'codex');
@@ -36,12 +39,13 @@ test('findRealCodex avoids PATH wrapper shim recursion', async (t) => {
   await withEnv(
     {
       CODEX_REAL_BIN: null,
-      PATH: fakeBin
+      PATH: fakeBin,
+      npm_config_prefix: root
     },
     async () => {
       const resolved = findRealCodex(wrapperPath);
       assert.notEqual(resolved, pathShim);
-      assert.match(resolved, /node_modules\/@openai\/codex\/bin\/codex\.js$/);
+      assert.equal(resolved, fakeGlobalCodex);
     }
   );
 });

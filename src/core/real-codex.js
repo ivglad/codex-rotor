@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import Module from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 function isExecutable(p) {
@@ -13,14 +14,6 @@ function isExecutable(p) {
 
 function splitPath() {
   return (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-}
-
-function resolvePackageLocalCodex() {
-  const local = fileURLToPath(new URL('../../node_modules/@openai/codex/bin/codex.js', import.meta.url));
-  if (isExecutable(local) || fs.existsSync(local)) {
-    return local;
-  }
-  return null;
 }
 
 function resolveWrapperCodexBin() {
@@ -49,6 +42,99 @@ function pointsToWrapper(candidate, wrapperBinRealPath) {
   }
 }
 
+function hasFile(p) {
+  try {
+    return fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+function prefixFromNodeModulesPath(maybePath) {
+  const normalized = safeRealpath(maybePath);
+  if (!normalized) return null;
+  const libNodeModules = `${path.sep}lib${path.sep}node_modules${path.sep}`;
+  const plainNodeModules = `${path.sep}node_modules${path.sep}`;
+
+  const libIdx = normalized.lastIndexOf(libNodeModules);
+  if (libIdx > 0) {
+    return normalized.slice(0, libIdx);
+  }
+  const plainIdx = normalized.lastIndexOf(plainNodeModules);
+  if (plainIdx > 0) {
+    return normalized.slice(0, plainIdx);
+  }
+  return null;
+}
+
+function prefixesFromPathLocation(maybePath) {
+  if (!maybePath) return [];
+  const candidates = [];
+  const normalized = safeRealpath(maybePath);
+  const raw = path.resolve(maybePath);
+
+  for (const value of [normalized, raw]) {
+    if (!value) continue;
+
+    const maybeFromNodeModules = prefixFromNodeModulesPath(value);
+    if (maybeFromNodeModules) {
+      candidates.push(maybeFromNodeModules);
+    }
+
+    const dir = path.dirname(value);
+    if (path.basename(dir) === 'bin') {
+      candidates.push(path.dirname(dir));
+    }
+  }
+
+  return candidates;
+}
+
+function unique(items) {
+  const out = [];
+  const seen = new Set();
+  for (const item of items) {
+    if (!item) continue;
+    const key = path.resolve(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function codexCandidatesFromPrefix(prefix) {
+  return [
+    path.join(prefix, 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
+    path.join(prefix, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+  ];
+}
+
+function discoverPrefixCandidates(wrapperArgv0, wrapperBinRealPath) {
+  const prefixes = [];
+
+  if (process.env.npm_config_prefix) {
+    prefixes.push(process.env.npm_config_prefix);
+  }
+
+  prefixes.push(...prefixesFromPathLocation(wrapperArgv0));
+  prefixes.push(...prefixesFromPathLocation(wrapperBinRealPath));
+
+  for (const dir of splitPath()) {
+    if (path.basename(dir) !== 'bin') continue;
+    prefixes.push(path.dirname(dir));
+  }
+
+  for (const globalPath of Module.globalPaths || []) {
+    const maybePrefix = prefixFromNodeModulesPath(globalPath);
+    if (maybePrefix) {
+      prefixes.push(maybePrefix);
+    }
+  }
+
+  return unique(prefixes);
+}
+
 export function findRealCodex(wrapperArgv0 = process.argv[1]) {
   const wrapperBinRealPath = resolveWrapperCodexBin();
 
@@ -60,11 +146,14 @@ export function findRealCodex(wrapperArgv0 = process.argv[1]) {
     return process.env.CODEX_REAL_BIN;
   }
 
-  // Prefer package-local upstream Codex binary first.
-  // This prevents recursion when PATH points `codex` to this wrapper shim.
-  const packageLocal = resolvePackageLocalCodex();
-  if (packageLocal) {
-    return packageLocal;
+  const prefixCandidates = discoverPrefixCandidates(wrapperArgv0, wrapperBinRealPath);
+  for (const prefix of prefixCandidates) {
+    for (const candidate of codexCandidatesFromPrefix(prefix)) {
+      if (!hasFile(candidate)) continue;
+      const real = safeRealpath(candidate);
+      if (real === wrapperBinRealPath) continue;
+      return candidate;
+    }
   }
 
   const self = fs.realpathSync(wrapperArgv0);
@@ -87,5 +176,5 @@ export function findRealCodex(wrapperArgv0 = process.argv[1]) {
     return candidate;
   }
 
-  throw new Error('Unable to resolve real codex binary. Set CODEX_REAL_BIN explicitly.');
+  throw new Error('Unable to resolve upstream codex binary. Install @openai/codex globally (same Node prefix) or set CODEX_REAL_BIN.');
 }

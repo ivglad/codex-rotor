@@ -12,8 +12,12 @@
 ## Установка
 
 ```bash
-npm install -g git+https://github.com/ivglad/codex-rotor.git
+npm install -g @openai/codex
+npm install -g --force git+https://github.com/ivglad/codex-rotor.git
 ```
+
+`codex-rotor` не поставляет и не вендорит `codex` внутри себя: upstream Codex CLI должен быть установлен отдельно.
+Флаг `--force` нужен, потому что `codex-rotor` целенаправленно перехватывает команду `codex` (wrapper) поверх установленного upstream Codex.
 
 ## Первый запуск
 

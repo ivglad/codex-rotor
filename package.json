@@ -40,8 +40,5 @@
     "check": "npm run test",
     "clean": "rm -rf dist node_modules",
     "pack:local": "npm pack --pack-destination dist"
-  },
-  "dependencies": {
-    "@openai/codex": "^0.125.0"
   }
 }
